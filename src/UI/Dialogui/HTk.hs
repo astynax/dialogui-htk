@@ -1,7 +1,11 @@
 {-# LANGUAGE LambdaCase #-}
 -- | Simple <https://en.wikipedia.org/wiki/Tk_%28software%29 Tk>-based GUI.
 
-module UI.Dialogui.HTk (runGUI) where
+module UI.Dialogui.HTk
+       ( runGUI, runGUIWith
+       , prepareInput, prepareOutput, prepareWindow
+       , defaultOptions
+       ) where
 
 import           Control.Monad    (void)
 import           Data.IORef       (newIORef, readIORef, writeIORef)
@@ -11,30 +15,53 @@ import qualified HTk.Toplevel.HTk as H
 import           UI.Dialogui      hiding (perform)
 
 
-{- | Returns the 'UI.Dialogui.UI', which shows the window
-and performs some actions (setup) just after start.
+data GUIOptions =
+  GUIOptions { prepareWindow :: HTk          -> IO ()
+             , prepareInput  :: Entry String -> IO ()
+             , prepareOutput :: Editor       -> IO ()
+             }
+
+
+{- | Returns the 'UI.Dialogui.UI'
+(built using 'runGUIWith' + 'defaultOptions')
 -}
 runGUI :: String      -- ^ Window title
        -> [Action a]  -- ^ Setup
        -> UI a        -- ^ Resulting UI
-runGUI title setup ctl = do
-  main <- initHTk [ text    title
-                  , minSize (300, 100)
-                  ]
+runGUI title = runGUIWith
+               $ defaultOptions { prepareWindow =
+                                     void . flip configure [text title] }
+
+
+{- | Default GUI options -}
+defaultOptions :: GUIOptions
+defaultOptions = GUIOptions nop nop nop
+  where nop = const $ return ()
+
+
+{- | Builds a GUI then runs some setup on it and returns 'UI.Dialogui.UI'
+-}
+runGUIWith :: GUIOptions -- ^ Options for window customizations
+           -> [Action a] -- ^ List of actions which performs some setup
+           -> UI a       -- ^ Resulting UI
+runGUIWith opts setup ctl = do
+  main <- initHTk []
+  prepareWindow opts main
 
   refState <- newIORef =<< initialize ctl
 
-  let exit = readIORef refState >>= finalize ctl >> destroy main
-
   entry           <- newEntry  main [] :: IO (Entry String)
   (outFrame, out) <- newOutput main
+
+  prepareInput  opts entry
 
   pack entry    [ Fill   X ]
   pack outFrame [ Fill   Both
                 , Expand On
                 ]
 
-  let perform = mapM_ $ \case
+  let exit = readIORef refState >>= finalize ctl >> destroy main
+      perform = mapM_ $ \case
         Write msg   -> writeTo out msg
         ClearOutput -> clearOutput out
         ScrollTo t  -> out `scrollTo` t
@@ -76,6 +103,8 @@ runGUI title setup ctl = do
                                   , width     10
                                   , disable
                                   ]
+      prepareOutput opts ed
+
       pack ed [ Side   AtLeft
               , Fill   Both
               , Expand On
